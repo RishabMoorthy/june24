@@ -74,11 +74,6 @@ public class ServerService {
             return Map.of("message", "Server Stopped");
 
         } else if ("Start".equals(action)) {
-            // Check the actual server port instead of an in-memory flag, which goes
-            // stale across restarts / manual starts and caused false "already running".
-            if (isPortInUse(appProperties.getCoreServer().getPort())) {
-                return Map.of("message", "Java app running already");
-            }
             String batPath = appProperties.getBatch().getJavaStart();
             if (batPath == null || batPath.isEmpty()) {
                 throw new RuntimeException("JAVA_START_BAT not configured");
@@ -165,7 +160,16 @@ public class ServerService {
             ProcessBuilder pb = new ProcessBuilder("netstat", "-aon");
             Process process = pb.start();
             String output = new String(process.getInputStream().readAllBytes());
-            return output.toLowerCase().contains(":" + port) && output.toLowerCase().contains("listening");
+            // Only treat the port as in use if its OWN line is in LISTENING state.
+            // A TIME_WAIT line for this port (+ some other LISTENING port) must NOT count.
+            String target = ":" + port;
+            for (String line : output.split("\\r?\\n")) {
+                if (!line.toLowerCase().contains("listening")) continue;
+                for (String col : line.trim().split("\\s+")) {
+                    if (col.endsWith(target)) return true;
+                }
+            }
+            return false;
         } catch (Exception e) {
             log.warn("netstat check failed: {}", e.getMessage());
             return false;
