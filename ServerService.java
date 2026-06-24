@@ -22,7 +22,6 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
@@ -33,7 +32,6 @@ public class ServerService {
     private final AppProperties appProperties;
     private final AuditLogRepository auditLogRepo;
 
-    private final AtomicBoolean javaAppRunning = new AtomicBoolean(false);
     private final AtomicReference<String> serverStartTime = new AtomicReference<>(null);
 
     private static final java.util.Collection<String> SERVER_ACTION_TYPES =
@@ -73,11 +71,12 @@ public class ServerService {
             } catch (IOException e) {
                 throw new RuntimeException("Failed to stop server: " + e.getMessage());
             }
-            javaAppRunning.set(false);
             return Map.of("message", "Server Stopped");
 
         } else if ("Start".equals(action)) {
-            if (javaAppRunning.get()) {
+            // Check the actual server port instead of an in-memory flag, which goes
+            // stale across restarts / manual starts and caused false "already running".
+            if (isPortInUse(appProperties.getCoreServer().getPort())) {
                 return Map.of("message", "Java app running already");
             }
             String batPath = appProperties.getBatch().getJavaStart();
@@ -88,15 +87,13 @@ public class ServerService {
                 // Resolve to an absolute Windows path (backslashes, no "..") so cmd.exe
                 // can run it — a relative "/"-style path fails on Windows.
                 String resolvedBat = Path.of(batPath).toAbsolutePath().normalize().toString();
-                ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", resolvedBat);
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-                // Detach — read output in background to prevent blocking
-                p.getInputStream().close();
+                // Launch detached in its own console so the server's stdio is not tied
+                // to this backend's pipe (an attached launch fills the pipe and hangs it).
+                new ProcessBuilder("cmd.exe", "/c", "start", "cmd", "/c", resolvedBat)
+                        .start();
             } catch (IOException e) {
                 throw new RuntimeException("Failed to start server: " + e.getMessage());
             }
-            javaAppRunning.set(true);
             return Map.of("message", "Server Started");
 
         } else {
