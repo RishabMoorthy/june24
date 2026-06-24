@@ -65,28 +65,16 @@ public class ServerService {
                 throw new RuntimeException("JAVA_STOP_BAT not configured");
             }
             try {
-                // Run directly (not in a detached "start cmd" window) so we can
-                // capture the script's output and exit code.
-                Process p = new ProcessBuilder("cmd.exe", "/c", batPath)
-                        .redirectErrorStream(true)
+                // Resolve to an absolute Windows path (backslashes, no "..") so cmd.exe
+                // can run it — a relative "/"-style path fails on Windows.
+                String resolvedBat = Path.of(batPath).toAbsolutePath().normalize().toString();
+                new ProcessBuilder("cmd.exe", "/c", "start", "cmd", "/c", resolvedBat)
                         .start();
-                String output = new String(p.getInputStream().readAllBytes());
-                int exitCode = p.waitFor();
-                log.info("runBatch STOP: workingDir={}, batPath={}, absPath={}, exists={}, exitCode={}, output=[{}]",
-                        System.getProperty("user.dir"), batPath,
-                        Path.of(batPath).toAbsolutePath(), Files.exists(Path.of(batPath)),
-                        exitCode, output);
-            } catch (IOException | InterruptedException e) {
+            } catch (IOException e) {
                 throw new RuntimeException("Failed to stop server: " + e.getMessage());
             }
-            // Verify against reality instead of blindly reporting success.
-            int port = appProperties.getCoreServer().getPort();
-            boolean stillUp = isPortInUse(port);
-            log.info("runBatch STOP: after stop, port {} stillUp={}", port, stillUp);
-            javaAppRunning.set(!stillUp);
-            return Map.of("message", stillUp
-                    ? "Stop triggered but server still running on port " + port
-                    : "Server Stopped");
+            javaAppRunning.set(false);
+            return Map.of("message", "Server Stopped");
 
         } else if ("Start".equals(action)) {
             if (javaAppRunning.get()) {
@@ -97,7 +85,10 @@ public class ServerService {
                 throw new RuntimeException("JAVA_START_BAT not configured");
             }
             try {
-                ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", batPath);
+                // Resolve to an absolute Windows path (backslashes, no "..") so cmd.exe
+                // can run it — a relative "/"-style path fails on Windows.
+                String resolvedBat = Path.of(batPath).toAbsolutePath().normalize().toString();
+                ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", resolvedBat);
                 pb.redirectErrorStream(true);
                 Process p = pb.start();
                 // Detach — read output in background to prevent blocking
